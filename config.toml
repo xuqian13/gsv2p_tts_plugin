@@ -25,7 +25,7 @@ command_enabled = true
 api_url = "https://gsv2p.acgnai.top/v1/audio/speech"
 
 # API认证Token
-api_token = "cdc5e9eee8681e4ff5fdad1f92b52f54"
+api_token = "your_api_token_here"
 
 # 默认音色
 default_voice = "原神-中文-派蒙_ZH"
