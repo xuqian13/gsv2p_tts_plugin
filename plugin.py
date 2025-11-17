@@ -1,64 +1,41 @@
 """
-GSV2P TTS 插件
+GSV2P TTS 插件 - 文本转语音
 
-基于 GSV2P API 的文本转语音插件，支持多种语言和高级语音合成参数。
-
-功能特性：
-- 支持中文、英文、中英混合等多种语言
-- 丰富的语音合成参数配置
-- 多种音色选择
-- Action自动触发和Command手动触发两种模式
-- 支持配置文件自定义设置
-
-使用方法：
-- Action触发：发送包含"语音"、"说话"等关键词的消息
-- Command触发：/gsv2p 你好世界 [音色]
-
-API接口：https://gsv2p.acgnai.top/v1/audio/speech
-
-致谢：
-- GPT-SoVITS开发者：@花儿不哭
-- 模型训练者：@红血球AE3803 @白菜工厂1145号员工
-- 推理特化包适配 & 在线推理：@AI-Hobbyist
+基于 GSV2P API 的语音合成插件，将文本转换为语音并发送。
+API: https://gsv2p.acgnai.top
 """
 
 from typing import List, Tuple, Type, Optional
 import aiohttp
 import asyncio
-import tempfile
-import uuid
+import os
 import json
 from src.common.logger import get_logger
 from src.plugin_system.base.base_plugin import BasePlugin
 from src.plugin_system.apis.plugin_register_api import register_plugin
-from src.plugin_system.base.base_action import BaseAction, ActionActivationType, ChatMode
+from src.plugin_system.base.base_action import BaseAction, ActionActivationType
 from src.plugin_system.base.base_command import BaseCommand
-from src.plugin_system.base.component_types import ComponentInfo
+from src.plugin_system.base.component_types import ComponentInfo, ChatMode
 from src.plugin_system.base.config_types import ConfigField
 
 logger = get_logger("gsv2p_tts_plugin")
 
-# ===== Action组件 =====
+
 class GSV2PTTSAction(BaseAction):
-    """GSV2P TTS Action - 智能语音合成"""
-    
+    """自动触发的语音合成 Action"""
+
     action_name = "gsv2p_tts_action"
     action_description = "使用GSV2P模型将文本转换为语音并发送"
-    
-    # 激活设置
-    focus_activation_type = ActionActivationType.KEYWORD
-    normal_activation_type = ActionActivationType.KEYWORD
+
+    activation_type = ActionActivationType.KEYWORD
     mode_enable = ChatMode.ALL
     parallel_action = False
-    
-    # 关键词激活
+
     activation_keywords = ["语音", "说话", "朗读", "念出来", "用语音说", "gsv2p", "tts"]
     keyword_case_sensitive = False
-    
-    # Action参数
+
     action_parameters = {
         "text": "要转换为语音的文本内容",
-        #"voice": "音色名称，可选"
     }
     action_require = [
         "当用户要求用语音回复时使用",
@@ -66,58 +43,54 @@ class GSV2PTTSAction(BaseAction):
         "当需要语音播报重要信息时使用"
     ]
     associated_types = ["text"]
-    
+
     async def execute(self) -> Tuple[bool, str]:
-        """执行GSV2P TTS语音合成"""
+        """执行语音合成"""
         try:
-            # 获取参数
             text = self.action_data.get("text", "").strip()
             voice = self.action_data.get("voice", "")
-            
+
             if not text:
                 await self.send_text("❌ 请提供要转换为语音的文本内容")
                 return False, "缺少文本内容"
-            
-            # 从配置获取设置
+
+            # 读取配置
             api_url = self.get_config("gsv2p.api_url", "https://gsv2p.acgnai.top/v1/audio/speech")
             api_token = self.get_config("gsv2p.api_token", "")
             default_voice = self.get_config("gsv2p.default_voice", "")
             timeout = self.get_config("gsv2p.timeout", 30)
-            
+
             if not api_token:
                 await self.send_text("❌ 请在配置文件中设置API Token")
                 return False, "缺少API Token"
-            
-            # 使用默认音色如果未指定
+
             if not voice:
                 voice = default_voice
 
-            # 检查音色是否仍为空
             if not voice:
-                await self.send_text("❌ 请在配置文件中设置默认音色或在命令中指定音色")
+                await self.send_text("❌ 请在配置文件中设置默认音色")
                 return False, "缺少音色参数"
 
-            logger.info(f"{self.log_prefix} 开始GSV2P语音合成，文本：{text[:50]}..., 音色：{voice}")
+            logger.info(f"{self.log_prefix} 开始语音合成: {text[:50]}..., 音色: {voice}")
 
-            # 调用GSV2P API
+            # 调用 API 生成语音
             audio_path = await self._call_gsv2p_api(api_url, api_token, text, voice, timeout)
-            
+
             if audio_path:
-                # 发送语音文件
                 await self.send_custom(message_type="voiceurl", content=audio_path)
-                logger.info(f"{self.log_prefix} GSV2P语音发送成功")
-                return True, f"成功生成并发送语音：{text[:30]}..."
+                logger.info(f"{self.log_prefix} 语音发送成功")
+                return True, f"成功生成并发送语音"
             else:
                 await self.send_text("❌ 语音合成失败，请稍后重试")
                 return False, "语音合成失败"
-                
+
         except Exception as e:
-            logger.error(f"{self.log_prefix} GSV2P语音合成出错: {e}")
+            logger.error(f"{self.log_prefix} 语音合成出错: {e}")
             await self.send_text(f"❌ 语音合成出错: {e}")
             return False, f"语音合成出错: {e}"
-    
+
     async def _call_gsv2p_api(self, api_url: str, api_token: str, text: str, voice: str, timeout: int) -> Optional[str]:
-        """调用GSV2P API生成语音"""
+        """调用 GSV2P API 生成语音文件"""
         try:
             # 构建请求数据
             request_data = {
@@ -145,134 +118,115 @@ class GSV2PTTSAction(BaseAction):
                     "seed": self.get_config("gsv2p.seed", -1)
                 }
             }
-            logger.info(f"请求数据: {request_data}")
+
             headers = {
                 "accept": "application/json",
                 "Authorization": f"Bearer {api_token}",
                 "Content-Type": "application/json"
             }
-            
-            logger.info(f"调用GSV2P API: {api_url}")
-            
+
+            # 发送 API 请求
             async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=timeout)) as session:
                 async with session.post(api_url, json=request_data, headers=headers) as response:
-                    logger.info(f"GSV2P API响应状态: {response.status}")
-                    logger.info(f"GSV2P API响应头: {dict(response.headers)}")
-
                     if response.status == 200:
-                        # 检查响应内容类型
                         content_type = response.headers.get('content-type', '').lower()
-                        logger.info(f"响应内容类型: {content_type}")
-
-                        # 读取响应数据
                         audio_data = await response.read()
-                        logger.info(f"接收到数据大小: {len(audio_data)} 字节")
 
-                        # 检查是否是JSON错误响应
+                        # 检查是否是错误的 JSON 响应
                         if 'application/json' in content_type:
                             try:
                                 error_json = json.loads(audio_data.decode('utf-8'))
-                                logger.error(f"API返回错误JSON: {error_json}")
+                                logger.error(f"API返回错误: {error_json}")
                                 return None
                             except:
                                 pass
 
-                        # 检查数据是否为空或过小
-                        if len(audio_data) < 100:  # 音频文件应该至少有100字节
-                            logger.error(f"音频数据过小，可能损坏: {len(audio_data)} 字节")
-                            logger.error(f"数据内容: {audio_data[:50]}")
+                        # 检查音频数据有效性
+                        if len(audio_data) < 100:
+                            logger.error(f"音频数据过小: {len(audio_data)} 字节")
                             return None
 
-                        # 保存音频文件
-                        filename = f"gsv2p_tts.mp3"
-                        temp_path = tempfile.gettempdir()
-                        audio_path = f"{temp_path}/{filename}"
-
+                        # 保存音频文件到项目根目录
+                        audio_path = os.path.abspath("gsv2p_tts_output.mp3")
                         with open(audio_path, "wb") as f:
                             f.write(audio_data)
 
-                        logger.info(f"GSV2P音频文件生成成功: {audio_path}")
-                        logger.info(f"文件大小: {len(audio_data)} 字节")
+                        logger.info(f"音频文件生成成功: {audio_path} ({len(audio_data)} 字节)")
                         return audio_path
                     else:
                         error_text = await response.text()
-                        logger.error(f"GSV2P API调用失败: {response.status} - {error_text}")
+                        logger.error(f"API调用失败: {response.status} - {error_text}")
                         return None
-                        
+
         except asyncio.TimeoutError:
-            logger.error("GSV2P API调用超时")
+            logger.error("API调用超时")
             return None
         except Exception as e:
-            logger.error(f"GSV2P API调用出错: {e}")
+            logger.error(f"API调用出错: {e}")
             return None
 
-# ===== Command组件 =====
+
 class GSV2PTTSCommand(BaseCommand):
-    """GSV2P TTS Command - 手动语音合成命令"""
-    
+    """手动触发的语音合成 Command"""
+
     command_name = "gsv2p_tts_command"
     command_description = "使用GSV2P模型将文本转换为语音"
-    
-    # 命令匹配模式：/gsv2p 文本内容 [音色]
+
     command_pattern = r"^/gsv2p\s+(?P<text>.+?)(?:\s+(?P<voice>\S+))?$"
     command_help = "使用GSV2P将文本转换为语音。用法：/gsv2p 你好世界 [音色]"
     command_examples = [
         "/gsv2p 你好，世界！",
-        "/gsv2p 今天天气不错 voice1",
-        "/gsv2p こんにちは voice2"
+        "/gsv2p 今天天气不错 原神-中文-派蒙_ZH",
+        "/gsv2p こんにちは"
     ]
     intercept_message = True
-    
+
     async def execute(self) -> Tuple[bool, str]:
-        """执行GSV2P TTS命令"""
+        """执行语音合成命令"""
         try:
-            # 获取匹配的参数
             text = self.matched_groups.get("text", "").strip()
             voice = self.matched_groups.get("voice", "")
-            
+
             if not text:
                 await self.send_text("❌ 请输入要转换为语音的文本内容")
                 return False, "缺少文本内容"
-            
-            # 从配置获取设置
+
+            # 读取配置
             api_url = self.get_config("gsv2p.api_url", "https://gsv2p.acgnai.top/v1/audio/speech")
             api_token = self.get_config("gsv2p.api_token", "")
             default_voice = self.get_config("gsv2p.default_voice", "")
             timeout = self.get_config("gsv2p.timeout", 30)
-            
+
             if not api_token:
                 await self.send_text("❌ 请在配置文件中设置API Token")
                 return False, "缺少API Token"
-            
-            # 使用默认音色如果未指定
+
             if not voice:
                 voice = default_voice
 
-            # 检查音色是否仍为空
             if not voice:
-                await self.send_text("❌ 请在配置文件中设置默认音色或在命令中指定音色")
+                await self.send_text("❌ 请在配置文件中设置默认音色")
                 return False, "缺少音色参数"
 
-            logger.info(f"执行GSV2P命令，文本：{text[:50]}..., 音色：{voice}")
+            logger.info(f"执行语音合成命令: {text[:50]}..., 音色: {voice}")
 
-            # 调用GSV2P API
+            # 调用 API 生成语音
             audio_path = await self._call_gsv2p_api(api_url, api_token, text, voice, timeout)
-            
+
             if audio_path:
-                # 发送语音文件
                 await self.send_type(message_type="voiceurl", content=audio_path)
-                return True, f"成功生成并发送语音：{text[:30]}..."
+                return True, f"成功生成并发送语音"
             else:
                 await self.send_text("❌ 语音合成失败，请稍后重试")
                 return False, "语音合成失败"
-                
+
         except Exception as e:
-            logger.error(f"GSV2P命令执行出错: {e}")
+            logger.error(f"命令执行出错: {e}")
             await self.send_text(f"❌ 语音合成出错: {e}")
             return False, f"语音合成出错: {e}"
-    
+
     async def _call_gsv2p_api(self, api_url: str, api_token: str, text: str, voice: str, timeout: int) -> Optional[str]:
-        """调用GSV2P API生成语音"""
+        """调用 GSV2P API 生成语音文件"""
         try:
             # 构建请求数据
             request_data = {
@@ -300,89 +254,73 @@ class GSV2PTTSCommand(BaseCommand):
                     "seed": self.get_config("gsv2p.seed", -1)
                 }
             }
-            
+
             headers = {
                 "accept": "application/json",
                 "Authorization": f"Bearer {api_token}",
                 "Content-Type": "application/json"
             }
-            
-            logger.info(f"调用GSV2P API: {api_url}")
-            
+
+            # 发送 API 请求
             async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=timeout)) as session:
                 async with session.post(api_url, json=request_data, headers=headers) as response:
-                    logger.info(f"GSV2P API响应状态: {response.status}")
-                    logger.info(f"GSV2P API响应头: {dict(response.headers)}")
-
                     if response.status == 200:
-                        # 检查响应内容类型
                         content_type = response.headers.get('content-type', '').lower()
-                        logger.info(f"响应内容类型: {content_type}")
-
-                        # 读取响应数据
                         audio_data = await response.read()
-                        logger.info(f"接收到数据大小: {len(audio_data)} 字节")
 
-                        # 检查是否是JSON错误响应
+                        # 检查是否是错误的 JSON 响应
                         if 'application/json' in content_type:
                             try:
                                 error_json = json.loads(audio_data.decode('utf-8'))
-                                logger.error(f"API返回错误JSON: {error_json}")
+                                logger.error(f"API返回错误: {error_json}")
                                 return None
                             except:
                                 pass
 
-                        # 检查数据是否为空或过小
-                        if len(audio_data) < 100:  # 音频文件应该至少有100字节
-                            logger.error(f"音频数据过小，可能损坏: {len(audio_data)} 字节")
-                            logger.error(f"数据内容: {audio_data[:50]}")
+                        # 检查音频数据有效性
+                        if len(audio_data) < 100:
+                            logger.error(f"音频数据过小: {len(audio_data)} 字节")
                             return None
 
-                        # 保存音频文件
-                        filename = f"gsv2p_tts_{uuid.uuid4().hex[:8]}.mp3"
-                        temp_path = tempfile.gettempdir()
-                        audio_path = f"{temp_path}/{filename}"
-
+                        # 保存音频文件到项目根目录
+                        audio_path = os.path.abspath("gsv2p_tts_output.mp3")
                         with open(audio_path, "wb") as f:
                             f.write(audio_data)
 
-                        logger.info(f"GSV2P音频文件生成成功: {audio_path}")
-                        logger.info(f"文件大小: {len(audio_data)} 字节")
+                        logger.info(f"音频文件生成成功: {audio_path} ({len(audio_data)} 字节)")
                         return audio_path
                     else:
                         error_text = await response.text()
-                        logger.error(f"GSV2P API调用失败: {response.status} - {error_text}")
+                        logger.error(f"API调用失败: {response.status} - {error_text}")
                         return None
-                        
+
         except asyncio.TimeoutError:
-            logger.error("GSV2P API调用超时")
+            logger.error("API调用超时")
             return None
         except Exception as e:
-            logger.error(f"GSV2P API调用出错: {e}")
+            logger.error(f"API调用出错: {e}")
             return None
-    
-# ===== 插件注册 =====
+
+
 @register_plugin
 class GSV2PTTSPlugin(BasePlugin):
-    """GSV2P TTS插件 - 基于GSV2P API的文本转语音插件"""
+    """GSV2P TTS 插件"""
 
     plugin_name = "gsv2p_tts_plugin"
-    plugin_description = "基于GSV2P API的文本转语音插件，支持多种语言和高级语音合成参数"
+    plugin_description = "基于GSV2P API的文本转语音插件，支持多种语言和音色"
     plugin_version = "1.0.0"
     plugin_author = "Augment Agent"
     enable_plugin = True
     config_file_name = "config.toml"
-    dependencies = []  # 插件依赖列表
-    python_dependencies = ["aiohttp"]  # Python包依赖列表
+    dependencies = []
+    python_dependencies = ["aiohttp"]
 
-    # 配置节描述
     config_section_descriptions = {
         "plugin": "插件基本配置",
         "components": "组件启用控制",
         "gsv2p": "GSV2P API配置"
     }
 
-    # 配置Schema定义
     config_schema = {
         "plugin": {
             "enabled": ConfigField(type=bool, default=True, description="是否启用插件")
@@ -423,15 +361,13 @@ class GSV2PTTSPlugin(BasePlugin):
     }
 
     def get_plugin_components(self) -> List[Tuple[ComponentInfo, Type]]:
-        """返回插件包含的组件列表"""
+        """返回插件组件列表"""
         components = []
 
-        # 根据配置决定是否启用组件（如果get_config方法不可用，则默认启用）
         try:
             action_enabled = self.get_config("components.action_enabled", True)
             command_enabled = self.get_config("components.command_enabled", True)
         except AttributeError:
-            # 如果get_config方法不存在，默认启用所有组件
             action_enabled = True
             command_enabled = True
 
