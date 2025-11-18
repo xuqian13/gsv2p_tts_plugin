@@ -99,7 +99,7 @@ command_enabled = true
 
 ## 获取 API Token
 
-访问 [GSV2P API](https://gsv2p.acgnai.top) 注册并获取 API Token。
+访问 [GSV2P API](https://tts.acgnai.top) 注册并获取 API Token。
 
 ## 常见音色列表
 
